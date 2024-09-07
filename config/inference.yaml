@@ -1,0 +1,17 @@
+inference:
+  save_path: '/root/AI4S-cupv1'
+  load_workers: 20
+  frequency: 7
+  batch: 10
+  size: 480
+  do: 'test'
+
+data:
+  PATH_data: "/bohr/dataset-zo6v/v1/speed/test"
+  PATH_target: "/bohr/dataset-b5uz/v1/test_field"
+  train_num: 0 
+  valid_num: 400
+  load_workers: 40
+  frequency: 7
+  batch: 10
+  size: 480

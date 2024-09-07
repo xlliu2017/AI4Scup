@@ -1,0 +1,50 @@
+Project:
+  name: 'MgNOv4.1'
+  experiment: 'MgNOv4.1'
+  checkpoint: False
+  save_top_k: 3
+  erase: False
+  do: 'test'
+  fine_tune: True
+  devices: 1
+  accelerator: 'gpu'
+  save: True
+  save_path: '/ibex/user/liux0t/AI4S-cupv2' 
+
+
+data:
+  PATH_data: "/ibex/user/liux0t"  # 数据集路径，这里只提供示例
+  PATH_target: "/ibex/user/liux0t"
+  train_num: 7100
+  valid_num: 100
+  load_workers: 40
+  frequency: 7
+  batch: 20
+  size: 480
+
+   
+model:
+  name: "MgNOv4.1"
+  iteration: 5
+  features: 24
+  loss: 'rel_l2' # rel_l2
+
+  
+
+train:
+  batchsize: 10
+  epochs: 5
+  lr: 0.00005
+  step_size: 100
+  gamma: 0.5
+  weight_decay: 0.0 #0001
+  eta_min: 0.0005
+  add_term: True
+
+
+
+
+ckpt:
+  PATH: "save_files"
+  save_dir: 'MgNOv4.1'
+  alias: 'MgNOv4.1'

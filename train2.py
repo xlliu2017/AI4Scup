@@ -11,6 +11,7 @@ import shutil
 import warnings
 import wandb
 import numpy as np
+import math
 from torch.utils.data import Dataset, DataLoader
 from collections import OrderedDict
 import matplotlib.pyplot as plt
@@ -27,6 +28,38 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 
+class CosineAnnealingWarmRestartsDecay(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, T_0, T_mult=1, eta_min=0, last_epoch=-1, decay_factor=0.9):
+        self.T_0 = T_0
+        self.T_mult = T_mult
+        self.base_eta_min = eta_min
+        self.T_i = T_0
+        self.decay_factor = decay_factor
+        self.cycle = 0
+        self.T_cur = last_epoch
+        super(CosineAnnealingWarmRestartsDecay, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch == -1:
+            return self.base_lrs
+
+        self.T_cur += 1
+        if self.T_cur >= self.T_i:
+            self.cycle += 1
+            self.T_cur = self.T_cur - self.T_i
+            self.T_i = self.T_i * self.T_mult
+
+        return [self.base_eta_min + (base_lr * (self.decay_factor ** self.cycle) - self.base_eta_min) *
+                (1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2
+                for base_lr in self.base_lrs]
+
+    def _get_closed_form_lr(self):
+        if self.last_epoch == -1:
+            return self.base_lrs
+
+        cos = (1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2
+        return [self.base_eta_min + (base_lr * (self.decay_factor ** self.cycle) - self.base_eta_min) * cos
+                for base_lr in self.base_lrs]
 
 class LpLoss(nn.Module):
     def __init__(self, d=2, p=2, size_average=True, reduction=True):
@@ -344,9 +377,7 @@ class Conv_Dyn(nn.Module):
         self.conv_3 = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, padding_mode=padding_mode)
         self.conv_4 = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, padding_mode=padding_mode)
         self.ln = nn.LayerNorm([resolution, resolution], elementwise_affine=True)
-    # def diva_fem(self, image, coef):
-    #     result = self.conv_0(F.gelu((self.conv_1(coef)))) * self.conv_2(image) 
-    #     return result
+   
 
     def forward(self, out):
         u, f, a, diva = out
@@ -423,7 +454,6 @@ class MG_fem(nn.Module):
                 u, f, a, diva = getattr(self, 'layer'+str(l))(out) 
                 out_list[l] = (u, f, a)
 
-        # print(out_list[0][0].shape, out_list[1][0].shape, out_list[2][0].shape, out_list[3][0].shape, out_list[4][0].shape, out_list[5][0].shape)
         for j in range(len(self.num_iteration)-2,-1,-1):
             u, f, a = out_list[j][0], out_list[j][1], out_list[j][2]
             u_post = u + self.RTlayers[j](out_list[j+1][0])
@@ -443,14 +473,17 @@ class MgNO(pl.LightningModule):
                     gamma= 0.5,
                     weight_decay= 1e-5,
                     eta_min = 5e-4,
-                    normalize_param = None
+                    normalize_param = None,
+                    iteration = 1
                     ):
         super(MgNO, self).__init__()
         self.learning_rate = learning_rate
         self.step_size = step_size
         self.gamma = gamma
         self.weight_decay = weight_decay
+        self.epochs = epochs
         self.eta_min = eta_min
+        self.iteration = iteration
 
         mean_sos, std_sos =  torch.tensor(1488.3911, dtype = torch.float32), torch.tensor(27.5279, dtype = torch.float32)
 
@@ -477,11 +510,9 @@ class MgNO(pl.LightningModule):
             self.lifting_3 = nn.Conv2d(1, features, kernel_size=1)
         else: 
             self.lifting = lifting
+
         if  proj is None: 
-            # self.proj =  nn.Sequential(nn.Conv2d(features, 128, kernel_size=1), nn.GELU(), nn.Conv2d(128, 2, kernel_size=1))
             self.proj = nn.Conv2d(features, 2, kernel_size=1)
-            # self.proj =  nn.Sequential(nn.Linear(features, 128), nn.GELU(), nn.Linear(128, 2))
-            # self.proj = nn.Sequential(nn.Conv2d(features, 128, kernel_size=1), nn.LayerNorm([128, 480,480], elementwise_affine=True), nn.GELU(), nn.Conv2d(128, 2, kernel_size=1))
         else: 
             self.proj = proj
         self.mgno = nn.ModuleList()
@@ -491,40 +522,22 @@ class MgNO(pl.LightningModule):
         
         self.val_iter = 0
 
-    def forward(self, sos,theta):
-        # 100,480,480,2
-        #x = torch.cat((sos, src), dim=-1)
-
+    def forward(self, sos, theta):
+        # theta is 100,480,480,2
+        # normalize
         sos = (sos - self.mean_sos) / (self.std_sos * .6)
-        # sos = sos.permute(0,3,1,2)
-        # homo = theta[...,1:].clone()
-        # homo = theta.clone()
-        # field = homo.clone().permute(0,3,1,2)
-        homo = theta
-        field = homo
-        u = self.lifting_1(field)
-        f = self.lifting_2(field) 
+      
+        u = self.lifting_1(theta)
+        f = self.lifting_2(theta) 
         a = self.lifting_3(sos)
-        # x = torch.cat((x,theta), dim=-1) # 100,960,960,4
-    
+ 
         u,f,a,diva_list = self.mgno[0](u,f,a,diva_list=[None for _ in range(6)])# batch,feature,x,y:   100,feature_,960+pad,960+pad
-        # u,f,a,diva_list = self.mgno[0](u,f,a,diva_list)
         u,f,a,diva_list = self.mgno[1](u,f,a,diva_list=[None for _ in range(6)])
-        u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        # u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        # u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        # u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        # u,f,a,diva_list = self.mgno[2](u,f,a,diva_list=[None for _ in range(6)])
-        # u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        # u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)
-        
-        # u,f,a = self.mgno[2](u,f,a)
-        #*self.std_field.to(sos.device) +  self.mean_field.to(sos.device)   # batch,x,y,2:   100,960,960 ,2
-        
+        for _ in range(self.iteration):
+            u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)  
+
         u =self.proj(u)
-        # u = u.permute(0,2,3,1)
-        # u =torch.view_as_real(torch.view_as_complex(homo)*(1+torch.view_as_complex(u)))
-        u = homo + u
+        u = theta + u
         return u
 
     def training_step(self, batch: torch.Tensor, batch_idx):    
@@ -570,20 +583,32 @@ class MgNO(pl.LightningModule):
         wandb.log({'Image': img})
         plt.close()
 
-    def configure_optimizers(self, optimizer=None, scheduler=None):
-        if optimizer is None:
-            optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)#
-            # optimizer = optim.SGD(self.parameters(), lr=self.learning_rate)
-        if  scheduler is None:
-            #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=self.step_size, gamma=self.gamma)
-            # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max = self.step_size, eta_min= self.eta_min)
-            scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=5e-4, steps_per_epoch=1, epochs=15, pct_start=0.1, anneal_strategy='cos', div_factor=1.0, final_div_factor=20.0,)
+
+    def configure_optimizers(self):
+        # Create the optimizer
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay) # 
+        # Create the OneCycleLR scheduler
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=self.learning_rate,
+            steps_per_epoch=11360,
+            epochs=self.epochs,
+            pct_start=0.002,
+            anneal_strategy='cos',
+            div_factor=4.0,
+            final_div_factor=5.0
+        )
+        
+        # Return the optimizer and scheduler configuration
         return {
-        "optimizer": optimizer,
-        "lr_scheduler": {
-            "scheduler": scheduler
-        },
-    }      
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'step',  # 'step' for step-wise updating
+                'frequency': 1,
+                'name': 'learning_rate',
+            },
+        }    
 ##########################################################################################
 
 def main(config_file):
@@ -617,34 +642,40 @@ def main(config_file):
     elif c_proj['do'] == 'test':
         val_dataloader = datasetFactory(config=config, do=c_proj['do'])
 
-    # model = FNO(wavenumber = c_model['wavenumber'], 
-    #             features_ = c_model['features'], 
-    #                 padding = c_model['padding'], 
-    #                 activation= 'relu',
-    #                 lifting = None, 
-    #                 proj =  None, 
-    #                 dim_input = 5, 
-    #                 normalize_param = normalizer,
-    #                 loss = c_model['loss'],
-    #                 learning_rate = c_train['lr'], 
-    #                 step_size= c_train['step_size'],
-    #                 gamma= c_train['gamma'],
-    #                 weight_decay= c_train['weight_decay'],
-    #                 eta_min= c_train['eta_min'])
-    # model = MgNO(lifting = None,
-    #             proj = None,
-    #             dim_input = 4,
-    #             features=24,
-    #             loss = c_model['loss'],
-    #             learning_rate = c_train['lr'], 
-    #             step_size= c_train['step_size'],
-    #             gamma= c_train['gamma'],
-    #             weight_decay= c_train['weight_decay'],
-    #             eta_min= c_train['eta_min'],
-    #             )
-    model = torch.load('/ibex/user/liux0t/AI4S-cupv2/submission21.1.pt')
+    if c_proj['do'] == 'test':
+        model = torch.load('/ibex/user/liux0t/AI4S-cupv2/submission16.1.pt')
+        model.criterion_val = LpLoss()
+        model.iteration = 5
+    elif c_proj['fine_tune'] == True:
+        model = torch.load('/ibex/user/liux0t/AI4S-cupv2/submission17.1.pt')
+        model.learning_rate = c_train['lr']
+        model.weight_decay = c_train['weight_decay']
+        model.iteration = c_model['iteration']
+        model.epochs = c_train['epochs']
+        if c_model['loss'] == 'rel_l2':
+            model.criterion = LpLoss()
+        elif c_model['loss'] == 'l2':
+            model.criterion = nn.MSELoss()
+        
+    else:
+        model = MgNO(lifting = None,
+                    proj = None,
+                    dim_input = 4,
+                    features=24,
+                    loss = c_model['loss'],
+                    learning_rate = c_train['lr'], 
+                    step_size= c_train['step_size'],
+                    gamma= c_train['gamma'],
+                    weight_decay= c_train['weight_decay'],
+                    epochs=c_train['epochs'],
+                    eta_min= c_train['eta_min'],
+                    iteration = c_model['iteration']
+                    )
+    # model.load_state_dict(torch.load('/ibex/user/liux0t/AI4S-cupv2/save_files/MgNOv5.1/model-epoch=001-val_loss=0.0051.ckpt')['state_dict']) #'/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt'
+
+    
     # print(model)
-    model.criterion = LpLoss()
+    
     max_epochs = config["train"]["epochs"]
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
@@ -652,7 +683,8 @@ def main(config_file):
         trainer = pl.Trainer(max_epochs=max_epochs,
                             accelerator=c_proj['accelerator'], 
                             devices = c_proj['devices'],
-                            callbacks = [checkpoint_callback,lr_monitor])#,
+                            callbacks = [checkpoint_callback,lr_monitor],
+                            )#,
                             #strategy = 'deepspeed',gradient_clip_val=0.8)  # dp ddp deepspeed
     else: 
         device_num = [i for i in range(c_proj['devices'])]
@@ -663,9 +695,9 @@ def main(config_file):
                             strategy='ddp_find_unused_parameters_true',) #gradient_clip_val=0.8
 
     if c_proj['do'] == 'train':
-        trainer.fit(model, train_dataloader, val_dataloader)
+        trainer.fit(model, train_dataloader, val_dataloader, ) #ckpt_path='/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt' '/ibex/user/liux0t/AI4S-cupv2/save_files/MgNOv3/model-epoch=001-val_loss=0.0078.ckpt'
         if c_proj['save'] == True:
-            save_path = os.path.join(c_proj['save_path'], 'submission21.1.pt')
+            save_path = os.path.join(c_proj['save_path'], 'submission17.1.pt')
             torch.save(model, save_path)
             print('save model done')
     elif c_proj['do'] == 'test':
@@ -681,7 +713,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training of the Architectures', add_help=True)
     parser.add_argument('-c','--config_file', type=str, 
                                 help='Path to the configuration file',
-                                default='/ibex/user/liux0t/AI4S-cupv2/config/FNO.yaml')
+                                default='/ibex/user/liux0t/AI4S-cupv2/config/MgNO.yaml')
     args=parser.parse_args()
     config_file = args.config_file
     main(config_file)
