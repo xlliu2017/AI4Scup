@@ -41,26 +41,28 @@ class Restrict(nn.Module):
 
 
 class MgConv(nn.Module):
-    def __init__(self, num_iteration, num_channel_u, num_channel_f, resolution=64, padding_mode='zeros', bias=False, use_res=False, elementwise_affine=True):
+    def __init__(self, num_iteration, out_channel, in_channel, resolution=64, 
+                padding_mode='zeros', normalization=True):
         super().__init__()
         self.num_iteration = num_iteration
-        self.num_channel_u = num_channel_u
-        self.padding_mode = padding_mode
-
+    
         # Calculate resolutions for downsampling
         self.resolutions = self.calculate_downsampling_levels(resolution, kernel_sizes=[3] * (len(num_iteration) - 1))
         self.upsample_kernels = self.calculate_adjusted_upsample_kernels_simple(self.resolutions[-1], self.resolutions)
         print(self.resolutions)
 
         # Create normalization layers
-        self.norm_layer_list = nn.ModuleList([
-            nn.LayerNorm([num_channel_u, self.resolutions[j], self.resolutions[j]], elementwise_affine=elementwise_affine)
-            for j in range(len(num_iteration) - 1)
-        ])
+        if normalization:
+            self.norm_layer_list = nn.ModuleList([
+                nn.GroupNorm(1, out_channel, eps=1e-5, affine=True)
+                for j in range(len(num_iteration) - 1)
+            ])
+        else:
+            self.norm_layer_list = nn.ModuleList([nn.Identity() for j in range(len(num_iteration) - 1)])
 
         # Create transposed convolution layers for upsampling
         self.rt_layers = nn.ModuleList([
-            nn.ConvTranspose2d(num_channel_u, num_channel_u, kernel_size=self.upsample_kernels[j], stride=2, padding=0, bias=False)
+            nn.ConvTranspose2d(out_channel, out_channel, kernel_size=self.upsample_kernels[j], stride=2, padding=0, bias=False)
             for j in range(len(num_iteration) - 1)
         ])
 
@@ -72,16 +74,16 @@ class MgConv(nn.Module):
             
             post_smooth_layers = []
             for i in range(num_iteration_l[0]):
-                S = nn.Conv2d(num_channel_f, num_channel_u, kernel_size=3, stride=1, padding=1, bias=bias, padding_mode=padding_mode)
+                S = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
                 if l == 0 and i == 0:
                     layer.append(MgIte_init(S))
                 else:
-                    A = nn.Conv2d(num_channel_u, num_channel_f, kernel_size=3, stride=1, padding=1, bias=bias, padding_mode=padding_mode)
+                    A = nn.Conv2d(out_channel, in_channel, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
                     layer.append(MgIte(A, S))
             if num_iteration_l[1] != 0:
                 for i in range(num_iteration_l[1]):
-                    S = nn.Conv2d(num_channel_f, num_channel_u, kernel_size=3, stride=1, padding=1, bias=bias, padding_mode=padding_mode)
-                    A = nn.Conv2d(num_channel_u, num_channel_f, kernel_size=3, stride=1, padding=1, bias=bias, padding_mode=padding_mode)
+                    S = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
+                    A = nn.Conv2d(out_channel, in_channel, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
                     post_smooth_layers.append(MgIte(A, S))
             else:
                 post_smooth_layers.append(nn.Identity())
@@ -90,9 +92,9 @@ class MgConv(nn.Module):
             self.post_smooth_layers.append(nn.Sequential(*post_smooth_layers))
 
             if l < len(num_iteration) - 1:
-                A = nn.Conv2d(num_channel_u, num_channel_f, kernel_size=3, stride=1, padding=1, bias=bias, padding_mode=padding_mode)
-                Pi = nn.Conv2d(num_channel_u, num_channel_u, kernel_size=3, stride=2, padding=1, bias=False, padding_mode=padding_mode)
-                R = nn.Conv2d(num_channel_f, num_channel_f, kernel_size=3, stride=2, padding=1, bias=False, padding_mode=padding_mode)
+                A = nn.Conv2d(out_channel, in_channel, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
+                Pi = nn.Conv2d(out_channel, out_channel, kernel_size=3, stride=2, padding=1, bias=False, padding_mode=padding_mode)
+                R = nn.Conv2d(in_channel, in_channel, kernel_size=3, stride=2, padding=1, bias=False, padding_mode=padding_mode)
   
                 layer = [Restrict(Pi, R, A)]
                
@@ -134,21 +136,54 @@ class MgConv(nn.Module):
             
         return out_list[0][0]
 
+class MgNO(nn.Module):
+    def __init__(self, num_layer, out_channel, in_channel, num_iteration, output_dim=1, resolution=64,
+                normalizer=None,  activation='gelu', init=False, ):
+        super().__init__()
+        self.num_layer = num_layer
+        self.out_channel = out_channel
+        self.in_channel = in_channel
+        self.num_iteration = num_iteration
+
+        
+        self.conv_list = nn.ModuleList([])   
+        for _ in range(num_layer):
+            self.conv_list.append(MgConv(num_iteration, out_channel, out_channel, resolution=resolution))
+        
+        self.last_layer = nn.Conv2d(out_channel, output_dim, kernel_size=1)
+        self.normalizer = normalizer 
+
+        if activation == 'relu':
+            self.act = nn.ReLU()
+        elif activation == 'gelu':
+            self.act = nn.GELU()
+        elif activation == 'tanh':
+            self.act = nn.Tanh()
+        elif activation == 'silu':
+            self.act = nn.SiLU()
+        else: raise NameError('invalid activation') 
+        
+    def forward(self, u):
+        for i in range(self.num_layer):
+            u = self.act(self.conv_list[i](u))
+        return self.normalizer.decode(self.last_layer(u)) if self.normalizer else self.last_layer(u) 
+
 # Test the code
 num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
 resolution = 220
 in_channels = 1
 out_channels = 1
-mg_conv = MgConv(num_iteration, in_channels, out_channels, resolution=resolution)
-mg_conv = mg_conv.to('cuda')
+model = MgNO(6, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
+# model = MgConv(num_iteration, in_channels, out_channels, resolution=resolution).to('cuda')
+
 x = torch.randn(10, 1, resolution, resolution).to('cuda')
 
 tic = torch.cuda.Event(enable_timing=True)
 toc = torch.cuda.Event(enable_timing=True)
 tic.record()
 with torch.no_grad():
-    for i in range(100):
-        output = mg_conv(x)
+    for i in range(10):
+        output = model(x)
 toc.record()
 torch.cuda.synchronize()
 print(tic.elapsed_time(toc))
