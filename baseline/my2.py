@@ -96,10 +96,10 @@ class MyDataset(Dataset):
             raise ValueError()
         # inputs [3, 2, 256, 256]
         # print(inputs.shape)
-        inputs = inputs.view(1, 2, 256, 768).permute(3, 0, 1, 2)
+        # inputs = inputs.view(1, 2, 256, 768).permute(3, 0, 1, 2)
         # inputs = inputs.view(1, 2, 256, 256).permute(3, 0, 1, 2)
         # inputs = inputs.view(1, 2, 256, 64).permute(3, 0, 1, 2) # 128,1,2,64
-        # inputs = inputs.view(6, 256, 256)
+        inputs = inputs.view(6, 256, 256)
         return inputs, labels
 
     def normalize(self, tensor, mean, std):

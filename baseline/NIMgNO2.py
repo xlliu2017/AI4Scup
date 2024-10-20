@@ -2,13 +2,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from Baselines import EncoderHelm2
+from Baselines2 import EncoderHelm2
 from DeepONetModules import FeedForwardNN, DeepOnetNoBiasOrg
-from FNOModules import FNO_WOR
+from testMG2 import MgNO
+from testunet import Unet
 
 ################################################################
 
-class NIOHelmPermInv(nn.Module):
+class NIMgNOHelmPermInv(nn.Module):
     def __init__(self,
                  input_dimensions_branch,
                  input_dimensions_trunk,
@@ -19,7 +20,7 @@ class NIOHelmPermInv(nn.Module):
                  retrain_seed,
                  fno_input_dimension=1000,
                  padding_frac=1 / 4):
-        super(NIOHelmPermInv, self).__init__()
+        super(NIMgNOHelmPermInv, self).__init__()
         output_dimensions = network_properties_trunk["n_basis"]
         fno_architecture["retrain_fno"] = retrain_seed
         network_properties_branch["retrain"] = retrain_seed
@@ -36,8 +37,14 @@ class NIOHelmPermInv(nn.Module):
         # self.correlation_network = nn.Sequential(nn.Linear(2, 50), nn.LeakyReLU(),
         #                                         nn.Linear(50, 50), nn.LeakyReLU(),
         #                                         nn.Linear(50, 1)).to(device)
-        if self.fno_layers != 0:
-            self.fno = FNO_WOR(fno_architecture, device=device, padding_frac=padding_frac)
+        num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
+        resolution = 120
+        in_channels = 768
+        out_channels = 32
+        self.mgno = MgNO(4, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
+
+        # if self.fno_layers != 0:
+        #     self.fno = FNO_WOR(fno_architecture, device=device, padding_frac=padding_frac)
 
         # self.attention = Attention(70 * 70, res=70 * 70)
         self.device = device
@@ -56,35 +63,35 @@ class NIOHelmPermInv(nn.Module):
         ny = (grid.shape[1])
 
         grid_r = grid.view(-1, 2)
-        x = self.deeponet(x, grid_r)
+        x = self.branch(x)
         # x = self.attention(x)
 
         # x = x.view(x.shape[0], x.shape[1], nx, ny)
 
         # x = x.reshape(x.shape[0], x.shape[1], nx * ny)
 
-        x = x.view(x.shape[0], x.shape[1], nx, ny) # N x 768 x 120 x 120
+        x = x.view(x.shape[0], x.shape[1], nx, ny)
+        x = self.mgno(x)
 
-        grid = grid.unsqueeze(0)
-        grid = grid.expand(x.shape[0], grid.shape[1], grid.shape[2], grid.shape[3]).permute(0, 3, 1, 2)
+        # grid = grid.unsqueeze(0)
+        # grid = grid.expand(x.shape[0], grid.shape[1], grid.shape[2], grid.shape[3]).permute(0, 3, 1, 2)
 
-        x = torch.cat((grid, x), 1)
+        # x = torch.cat((grid, x), 1)
 
-        weight_trans_mat = self.fc0.weight.data
-        bias_trans_mat = self.fc0.bias.data
-        # weight_trans_mat = torch.cat([weight_trans_mat[:, :2], weight_trans_mat[:, 2].view(-1, 1).repeat(1, L), weight_trans_mat[:, 3].view(-1, 1)], dim=1)
-        weight_trans_mat = torch.cat([weight_trans_mat[:, :2], weight_trans_mat[:, 2].view(-1, 1).repeat(1, L) / L], dim=1)
-        # weight_trans_mat = torch.cat([weight_trans_mat.repeat(1, L)], dim=1)
-        x = x.permute(0, 2, 3, 1)
+        # weight_trans_mat = self.fc0.weight.data
+        # bias_trans_mat = self.fc0.bias.data
+        # # weight_trans_mat = torch.cat([weight_trans_mat[:, :2], weight_trans_mat[:, 2].view(-1, 1).repeat(1, L), weight_trans_mat[:, 3].view(-1, 1)], dim=1)
+        # weight_trans_mat = torch.cat([weight_trans_mat[:, :2], weight_trans_mat[:, 2].view(-1, 1).repeat(1, L) / L], dim=1)
+        # # weight_trans_mat = torch.cat([weight_trans_mat.repeat(1, L)], dim=1)
+        # x = x.permute(0, 2, 3, 1)
         # input_corr = x[..., np.random.randint(0, L, 2)]
         # out_corr = self.correlation_network(input_corr)
         # x = torch.concat((x, out_corr), -1)
-        x = torch.matmul(x, weight_trans_mat.T) + bias_trans_mat
-        # shape of x is N x 120 x 120 x 32
-        if self.fno_layers != 0:
-            x = self.fno(x)
+        # x = torch.matmul(x, weight_trans_mat.T) + bias_trans_mat
+        # if self.fno_layers != 0:
+        #     x = self.fno(x)
 
-        return x[:, :, :, 0]
+        return x
 
     def print_size(self):
         print("Branch prams:")
@@ -93,7 +100,7 @@ class NIOHelmPermInv(nn.Module):
         t_size = self.trunk.print_size()
         if self.fno_layers != 0:
             print("FNO prams:")
-            f_size = self.fno.print_size()
+            f_size = self.mgno.print_size()
         else:
             print("NO FNO")
         # print("Attention prams:")
