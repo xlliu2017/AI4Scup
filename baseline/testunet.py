@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from collections import OrderedDict
 from typing import List, Tuple, Union
+from testMG2 import MgNO
 
 class Unet2015(nn.Module):
     """Simplified 2D UNet model."""
@@ -212,8 +213,8 @@ class ResidualBlock(nn.Module):
     ):
         super().__init__()
         self.activation = self.get_activation(activation)
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), padding=(1, 1))
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3), padding=(1, 1))
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 3), padding=(0, 1))
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=(1, 3), padding=(0, 1))
         # If the number of input channels is not equal to the number of output channels we have to
         # project the shortcut connection
         if in_channels != out_channels:
@@ -694,6 +695,12 @@ class Unet(nn.Module):
         else:
             self.final = nn.Conv2d(in_channels, out_channels, kernel_size=(3, 3), padding=(0, 0), stride=2)
 
+        num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
+        resolution = 127
+        in_channels = 32
+        out_channels = 32
+        self.mgno = MgNO(4, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
+
     def get_activation(self, activation):
         if activation == 'relu':
             return nn.ReLU()
@@ -744,8 +751,11 @@ class Unet(nn.Module):
                 x = m(x)
 
         x = self.final(self.activation(self.norm(x))) # 127x127
+        
+        x = self.mgno(x)
         # corp to 120x120
-        x = x[:,:,4:124,4:124].squeeze()
+        x = x[:,4:124,4:124]
+
         return x
 
 
@@ -1092,47 +1102,47 @@ class FourierUnet(nn.Module):
         return x
 
 
-# If you have other classes like AltFourierUnet or other variants that also require the same changes,
-# ensure to apply similar modifications to their __init__ and forward methods.
+if __name__ == "__main__":
+    import torch
 
-# Example usage of the revised Unet class
+    # Example usage of the revised Unet class
 
-# Define the model parameters
-input_channels = 6      # e.g., RGB image
-output_channels = 1     # e.g., Grayscale output
-hidden_channels = 32
-activation = "gelu"
-norm = True
-ch_mults = (1, 2, 2, 4)
-is_attn = (False, False, False, False)
-mid_attn = False
-n_blocks = 2
-use1x1 = False
+    # Define the model parameters
+    input_channels = 6      # e.g., RGB image
+    output_channels = 32     # e.g., Grayscale output
+    hidden_channels = 32
+    activation = "gelu"
+    norm = True
+    ch_mults = (1, 2, 2, 4)
+    is_attn = (False, False, False, False)
+    mid_attn = False
+    n_blocks = 2
+    use1x1 = False
 
-# Initialize the model
-model = Unet(
-    input_channel=input_channels,
-    output_channel=output_channels,
-    hidden_channels=hidden_channels,
-    activation=activation,
-    norm=norm,
-    ch_mults=ch_mults,
-    is_attn=is_attn,
-    mid_attn=mid_attn,
-    n_blocks=n_blocks,
-    use1x1=use1x1,
-)
-# count number of parameters
-print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
+    # Initialize the model
+    model = Unet(
+        input_channel=input_channels,
+        output_channel=output_channels,
+        hidden_channels=hidden_channels,
+        activation=activation,
+        norm=norm,
+        ch_mults=ch_mults,
+        is_attn=is_attn,
+        mid_attn=mid_attn,
+        n_blocks=n_blocks,
+        use1x1=use1x1,
+    ).to('cuda')
+    # count number of parameters
+    print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 
+    # Create a dummy input tensor
+    dummy_input = torch.randn(8, input_channels, 256, 256).to('cuda')  # [batch_size, channels, height, width]
 
-# Create a dummy input tensor
-dummy_input = torch.randn(8, input_channels, 240, 240)  # [batch_size, channels, height, width]
+    # Forward pass
+    output = model(dummy_input)
 
-# Forward pass
-output = model(dummy_input)
+    print(f"Output shape: {output.shape}")  # Expected: [8, output_channels, 256, 256]
 
-print(f"Output shape: {output.shape}")  # Expected: [8, output_channels, 256, 256]
 
 
 

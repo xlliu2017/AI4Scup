@@ -327,14 +327,14 @@ grid = train_dataset.get_grid().squeeze(0)
     # df.to_csv(folder + '/denseblock_architecture.txt', header=False, index=True, mode='a')
 
     # print("Using FCNIO")
-model = NIOHelmPermInv(input_dimensions_branch=inp_dim_branch,
-                        input_dimensions_trunk=grid.shape[2],
-                        network_properties_branch=branch_architecture_,
-                        network_properties_trunk=trunk_architecture_,
-                        fno_architecture=fno_architecture_,
-                        device=device,
-                        retrain_seed=retrain_seed,
-                        fno_input_dimension=fno_input_dimension)  # 用这个model
+# model = NIMgNOHelmPermInv(input_dimensions_branch=inp_dim_branch,
+#                         input_dimensions_trunk=grid.shape[2],
+#                         network_properties_branch=branch_architecture_,
+#                         network_properties_trunk=trunk_architecture_,
+#                         fno_architecture=fno_architecture_,
+#                         device=device,
+#                         retrain_seed=retrain_seed,
+#                         fno_input_dimension=fno_input_dimension)  # 用这个model
 # model = InversionNetHelm(start=32).to(device)
 
 # num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
@@ -343,30 +343,30 @@ model = NIOHelmPermInv(input_dimensions_branch=inp_dim_branch,
 # out_channels = 48
 # model = MgNO(4, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
 
-# input_channels = 6      # e.g., RGB image
-# output_channels = 1     # e.g., Grayscale output
-# hidden_channels = 32
-# activation = "gelu"
-# norm = True
-# ch_mults = (1, 2, 2, 4)
-# is_attn = (False, False, False, False)
-# mid_attn = False
-# n_blocks = 2
-# use1x1 = False
+input_channels = 6      # e.g., RGB image
+output_channels = 32     # e.g., Grayscale output
+hidden_channels = 32
+activation = "gelu"
+norm = True
+ch_mults = (1, 2, 2, 4)
+is_attn = (False, False, False, False)
+mid_attn = False
+n_blocks = 2
+use1x1 = False
 
-# # Initialize the model
-# model = Unet(
-#     input_channel=input_channels,
-#     output_channel=output_channels,
-#     hidden_channels=hidden_channels,
-#     activation=activation,
-#     norm=norm,
-#     ch_mults=ch_mults,
-#     is_attn=is_attn,
-#     mid_attn=mid_attn,
-#     n_blocks=n_blocks,
-#     use1x1=use1x1,
-# )
+# Initialize the model
+model = Unet(
+    input_channel=input_channels,
+    output_channel=output_channels,
+    hidden_channels=hidden_channels,
+    activation=activation,
+    norm=norm,
+    ch_mults=ch_mults,
+    is_attn=is_attn,
+    mid_attn=mid_attn,
+    n_blocks=n_blocks,
+    use1x1=use1x1,
+)
 
 start_epoch = 0
 best_model_testing_error = 100

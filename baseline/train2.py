@@ -46,9 +46,9 @@ add_ssim = True
 training_properties_ = {
     "step_size": 15,
     "gamma": 1,
-    "epochs": 2000,
-    "batch_size": 256,
-    "learning_rate": 0.001,
+    "epochs": 100,
+    "batch_size": 32,
+    "learning_rate": 0.0008,
     "norm": "minmax",
     "weight_decay": 1e-06,
     "reg_param": 0.0,
@@ -337,36 +337,36 @@ grid = train_dataset.get_grid().squeeze(0)
 #                         fno_input_dimension=fno_input_dimension)  # 用这个model
 # model = InversionNetHelm(start=32).to(device)
 
-num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
-resolution = 256
-in_channels = 6
-out_channels = 48
-model = MgNO(4, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
+# num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
+# resolution = 256
+# in_channels = 6
+# out_channels = 48
+# model = MgNO(4, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
 
-# input_channels = 6      # e.g., RGB image
-# output_channels = 1     # e.g., Grayscale output
-# hidden_channels = 32
-# activation = "gelu"
-# norm = True
-# ch_mults = (1, 2, 2, 4)
-# is_attn = (False, False, False, False)
-# mid_attn = False
-# n_blocks = 2
-# use1x1 = False
+input_channels = 6      # e.g., RGB image
+output_channels = 32     # e.g., Grayscale output
+hidden_channels = 32
+activation = "gelu"
+norm = True
+ch_mults = (1, 2, 2, 2, 4)
+is_attn = (False, False, False, False, False)
+mid_attn = False
+n_blocks = 3
+use1x1 = False
 
-# # Initialize the model
-# model = Unet(
-#     input_channel=input_channels,
-#     output_channel=output_channels,
-#     hidden_channels=hidden_channels,
-#     activation=activation,
-#     norm=norm,
-#     ch_mults=ch_mults,
-#     is_attn=is_attn,
-#     mid_attn=mid_attn,
-#     n_blocks=n_blocks,
-#     use1x1=use1x1,
-# )
+# Initialize the model
+model = Unet(
+    input_channel=input_channels,
+    output_channel=output_channels,
+    hidden_channels=hidden_channels,
+    activation=activation,
+    norm=norm,
+    ch_mults=ch_mults,
+    is_attn=is_attn,
+    mid_attn=mid_attn,
+    n_blocks=n_blocks,
+    use1x1=use1x1,
+)
 
 start_epoch = 0
 best_model_testing_error = 100
@@ -383,7 +383,7 @@ if torch.cuda.is_available():
     batch_acc = batch_acc * torch.cuda.device_count()
 
 print("Maximum number of workers: ", max_workers)
-training_set = DataLoader(train_dataset, batch_size=batch_acc, shuffle=True, num_workers=max_workers, pin_memory=True)
+training_set = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=max_workers, pin_memory=True)
 print("training set length:", len(training_set))
 testing_set = DataLoader(test_dataset, batch_size=40, shuffle=True, num_workers=max_workers, pin_memory=True)
 n_iter_per_epoch = int((train_dataset.length + 1) / batch_size)
@@ -433,6 +433,9 @@ if scheduler_string == "cyclic":
                                                   step_size_up=int(n_iter_per_epoch / 2) * epochs, mode="triangular2")
 elif scheduler_string == "step":
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=n_iter_per_epoch, gamma=gamma)
+elif scheduler_string == "cycle":
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=n_iter_per_epoch,
+                                                    epochs=epochs, pct_start=0.3, div_factor=5, final_div_factor=50)
 else:
     raise ValueError
 # if os.path.isfile(folder + "/optimizer_state.pkl"):

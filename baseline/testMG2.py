@@ -138,21 +138,21 @@ class MgConv(nn.Module):
 
 class MgNO(nn.Module):
     def __init__(self, num_layer, out_channel, in_channel, num_iteration, output_dim=1, resolution=64,
-                normalizer=None,  activation='gelu', init=False, ):
+                activation='gelu',):
         super().__init__()
         self.num_layer = num_layer
         self.out_channel = out_channel
         self.in_channel = in_channel
         self.num_iteration = num_iteration
 
-        
+        self.lift = nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1)        
         self.conv_list = nn.ModuleList([])   
         for _ in range(num_layer):
             self.conv_list.append(MgConv(num_iteration, out_channel, out_channel, resolution=resolution))
         
-        self.last_layer = nn.Conv2d(out_channel, output_dim, kernel_size=1)
-        self.normalizer = normalizer 
-
+        # self.last_layer = DownsampleNet(in_channel=out_channel)
+        self.last_layer = nn.Conv2d(out_channel, output_dim, kernel_size=1, stride=1, padding=0)
+    
         if activation == 'relu':
             self.act = nn.ReLU()
         elif activation == 'gelu':
@@ -162,21 +162,58 @@ class MgNO(nn.Module):
         elif activation == 'silu':
             self.act = nn.SiLU()
         else: raise NameError('invalid activation') 
+
+    def print_size(self):
+        # number of parameters
+        num_params = 0
+        for param in self.parameters():
+            num_params += param.numel()
+        print(num_params)
+        return  num_params
+
         
     def forward(self, u):
+        u = self.lift(u)
         for i in range(self.num_layer):
             u = self.act(self.conv_list[i](u))
-        return self.normalizer.decode(self.last_layer(u)) if self.normalizer else self.last_layer(u) 
+        return  self.last_layer(u).squeeze(1)
+
+
+# 定义混合池化模块
+class MixedPooling(nn.Module):
+    def __init__(self, kernel_size=2, stride=2):
+        super(MixedPooling, self).__init__()
+        self.max_pool = nn.MaxPool2d(kernel_size, stride)
+        self.avg_pool = nn.AvgPool2d(kernel_size, stride)
+
+    def forward(self, x):
+        return self.avg_pool(x)
+
+# 定义下采样网络
+class DownsampleNet(nn.Module):
+    def __init__(self, in_channel=16, out_channels=1):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channel, 1, kernel_size=1, stride=1, padding=0)
+        self.pool = MixedPooling(kernel_size=2, stride=2)  # 256x256 -> 128x128
+   
+    def forward(self, x):
+        x = self.pool(self.conv(x))        # (batch_size, 16, 128, 128)
+        # 裁剪到120x120，每边裁剪4个像素
+        x = x[:, :, 4:124, 4:124]  # (batch_size, 16, 120, 120)
+        return x
+
+
+
 
 # Test the code
 num_iteration = [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]
-resolution = 220
-in_channels = 1
+resolution = 256
+in_channels = 3
 out_channels = 1
 model = MgNO(6, out_channels, in_channels, num_iteration, resolution=resolution).to('cuda')
 # model = MgConv(num_iteration, in_channels, out_channels, resolution=resolution).to('cuda')
 
-x = torch.randn(10, 1, resolution, resolution).to('cuda')
+x = torch.randn(10, 3, resolution, resolution).to('cuda')
 
 tic = torch.cuda.Event(enable_timing=True)
 toc = torch.cuda.Event(enable_timing=True)
@@ -184,6 +221,7 @@ tic.record()
 with torch.no_grad():
     for i in range(10):
         output = model(x)
+print(output.shape)
 toc.record()
 torch.cuda.synchronize()
 print(tic.elapsed_time(toc))
