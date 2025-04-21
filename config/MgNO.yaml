@@ -1,15 +1,16 @@
 Project:
-  name: 'MgNOv7.2'
-  experiment: 'MgNOv7.2'
+  name: 'MgNO14'
+  experiment: 'MgNO14'
   checkpoint: False
-  save_top_k: 3
+  save_top_k: 5
   erase: False
-  do: 'test'
+  do: 'train'
   fine_tune: True
   devices: 1
   accelerator: 'gpu'
   save: True
   save_path: '/ibex/user/liux0t/AI4S-cupv2' 
+  save_name: 'submission14new.pt'
 
 
 data:
@@ -17,15 +18,15 @@ data:
   PATH_target: "/ibex/user/liux0t"
   train_num: 6900
   valid_num: 10
-  load_workers: 40
+  load_workers: 15
   frequency: 7
   batch: 10
   size: 480
 
    
 model:
-  name: "MgNOv7.2"
-  iteration: 6
+  name: "MgNO14"
+  iteration: 3
   features: 24
   loss: 'rel_l2' # rel_l2
 
@@ -33,8 +34,8 @@ model:
 
 train:
   batchsize: 10
-  epochs: 10
-  lr: 0.000005
+  epochs: 5
+  lr: 0.000008
   step_size: 100
   gamma: 0.5
   weight_decay: 0.0 #0001
@@ -46,5 +47,5 @@ train:
 
 ckpt:
   PATH: "save_files"
-  save_dir: 'MgNOv7.2'
-  alias: 'MgNOv7.2'
+  save_dir: 'MgNO14'
+  alias: 'MgNO14'
