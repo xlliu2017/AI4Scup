@@ -1,0 +1,3 @@
+epoch,learning_rate,learning_rate_step,loss_step,step
+,2.9999994852899458e-05,,,49
+0,,2.9999995604157448e-05,0.8816858530044556,49
