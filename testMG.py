@@ -79,7 +79,7 @@ class MG_FEM(nn.Module):
         image_sizes = [H]  # Initialize with the original image size
         
         for kernel_size in kernel_sizes:
-            H_out = (H - kernel_size) // stride + 1
+            H_out = (H + 2 * padding - kernel_size) // stride + 1
             image_sizes.append(H_out)
             H = H_out  # Update input size for the next level
         
@@ -119,7 +119,47 @@ class MG_FEM(nn.Module):
         
         return out_list[0][0], diva_list
 
+class MgNO(nn.Module):
+    def __init__(self,
+                    lifting = None, 
+                    proj =  None, 
+                    dim_input = 4,  
+                    features = 12,
+                    ):
+        super(MgNO, self).__init__()
 
+        mean_sos, std_sos =  torch.tensor(1488.3911, dtype = torch.float32), torch.tensor(27.5279, dtype = torch.float32)
+
+        self.register_buffer("mean_sos", mean_sos)
+        self.register_buffer("std_sos", std_sos)
+    
+        self.lifting_1 = nn.Conv2d(2, features, kernel_size=1, bias=False)
+        self.lifting_2 = nn.Conv2d(2, features, kernel_size=1, bias=False)
+        self.lifting_3 = nn.Conv2d(1, features, kernel_size=1)
+        self.proj = nn.Conv2d(features, 2, kernel_size=1)
+     
+        self.mgno = nn.ModuleList()
+        for l in range(6):
+            self.mgno.append(MG_fem(in_channels=features, out_channels=features, num_iteration=[1,1,1,1,1,1,]))
+        
+
+    def forward(self, sos, theta):
+        # theta is 100,480,480,2
+        # normalize
+        sos = (sos - self.mean_sos) / (self.std_sos * .6)
+      
+        u = self.lifting_1(theta)
+        f = self.lifting_2(theta) 
+        a = self.lifting_3(sos)
+ 
+        u,f,a,diva_list = self.mgno[0](u,f,a,diva_list=[None for _ in range(6)])# batch,feature,x,y:   100,feature_,960+pad,960+pad
+        u,f,a,diva_list = self.mgno[1](u,f,a,diva_list=[None for _ in range(6)])
+        for _ in range(self.iteration):
+            u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)  
+
+        u =self.proj(u)
+        u = theta + u
+        return u
 
 def benchmark_mg_fem(in_channels, out_channels, input_size, num_iterations, device):
     model = MG_FEM(in_channels, out_channels, num_iterations=num_iterations, resolution=220).to(device)
