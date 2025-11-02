@@ -1,0 +1,43 @@
+Project:
+  name: 'MgNO_TrainUnroll_N5_EqLR_Exp1' # Updated experiment name
+  experiment: 'MgNO_TrainUnroll_N5_EqLR_Exp1'
+  checkpoint: False
+  save_top_k: 1
+  erase: False
+  do: 'train'
+  fine_tune: False
+  devices: 1
+  accelerator: 'gpu'
+  save: True
+  save_path: '/ibex/user/liux0t/AI4S-cupv2'
+  save_name: 'MgNO_TrainUnroll_N5_EqLR_final.pt'
+
+data:
+  PATH_data: "/ibex/user/liux0t"
+  PATH_target: "/ibex/user/liux0t"
+  train_num: 6900
+  valid_num: 10
+  load_workers: 15
+  frequency: 7
+  batch: 10
+  size: 480
+
+model:
+  name: "MgNO_TrainUnroll_N5"
+  max_iterations: 3       # N_final
+  start_iteration: 1      # Start T&U from depth 1
+  features: 32
+  loss: 'rel_l2'
+
+train:
+  batchsize: 10
+  epochs_per_stage: 4    # Epochs per depth stage
+  lr: 0.0005               # Initial/Max learning rate for OneCycleLR (used in each stage)
+  lr_decay_factor: .5    # <<< SET TO 1.0 TO PREVENT DECAY BETWEEN STAGES >>>
+  weight_decay: 0.00001
+  eta_min: 10           # Min LR for OneCycleLR within each stage
+
+ckpt:
+  PATH: "save_files"
+  save_dir: 'MgNO_TrainUnroll_N5_EqLR_Exp1'
+  alias: 'MgNO_TrainUnroll_N5_EqLR_Exp1'

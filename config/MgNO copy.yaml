@@ -1,32 +1,32 @@
 Project:
-  name: 'MgNO14'
-  experiment: 'MgNO14'
+  name: 'MgNO5'
+  experiment: 'MgNO5'
   checkpoint: False
   save_top_k: 5
   erase: False
-  do: 'test'
-  fine_tune: True
+  do: 'train'
+  fine_tune: False
   devices: 1
   accelerator: 'gpu'
   save: True
   save_path: '/ibex/user/liux0t/AI4S-cupv2' 
-  save_name: 'submission14new.pt'
-  test_ckpt_path: '/ibex/user/liux0t/AI4S-cupv2/submission14new.pt'
+  save_name: 'submission5.pt'
+
 
 data:
   PATH_data: "/ibex/user/liux0t"  # 数据集路径，这里只提供示例
   PATH_target: "/ibex/user/liux0t"
   train_num: 6900
   valid_num: 10
-  load_workers: 15
+  load_workers: 40
   frequency: 7
   batch: 10
   size: 480
 
    
 model:
-  name: "MgNO14"
-  iteration: 2
+  name: "MgNO5"
+  iteration: 3
   features: 24
   loss: 'rel_l2' # rel_l2
 
@@ -34,8 +34,8 @@ model:
 
 train:
   batchsize: 10
-  epochs: 5
-  lr: 0.000008
+  epochs: 30
+  lr: 0.0001
   step_size: 100
   gamma: 0.5
   weight_decay: 0.0 #0001
@@ -47,5 +47,5 @@ train:
 
 ckpt:
   PATH: "save_files"
-  save_dir: 'MgNO14'
-  alias: 'MgNO14'
+  save_dir: 'MgNO5'
+  alias: 'MgNO5'

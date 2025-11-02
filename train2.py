@@ -646,8 +646,8 @@ def main(config_file):
         val_dataloader = datasetFactory(config=config, do=c_proj['do'])
 
     if c_proj['do'] == 'test':
-        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission13.3.pt')
-        model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNOv3.1/model-epoch=002-val_loss=0.0075.ckpt')['state_dict'])
+        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission14new.pt')
+        # model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNOv3.1/model-epoch=002-val_loss=0.0075.ckpt')['state_dict'])
         model.criterion_val = LpLoss()
         model.iteration = c_model['iteration']
     elif c_proj['fine_tune'] == True:

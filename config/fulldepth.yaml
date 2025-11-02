@@ -1,0 +1,44 @@
+Project:
+  name: 'MgNO_Direct_N4_EqLR_Exp1' # Updated experiment name
+  experiment: 'MgNO_Direct_N4_EqLR_Exp1'
+  checkpoint: False
+  save_top_k: 1
+  erase: False
+  do: 'train'
+  fine_tune: False
+  devices: 1
+  accelerator: 'gpu'
+  save: True
+  save_path: '/ibex/user/liux0t/AI4S-cupv2'
+  save_name: 'MgNO_Direct_N4_EqLR_final.pt'
+
+data:
+  PATH_data: "/ibex/user/liux0t"
+  PATH_target: "/ibex/user/liux0t"
+  train_num: 6900
+  valid_num: 10
+  load_workers: 15
+  frequency: 7
+  batch: 10
+  size: 480
+
+model:
+  name: "MgNO_Direct_N4"
+  max_iterations: 3
+  start_iteration: 3 # Start directly at N_final=4
+  features: 32
+  loss: 'rel_l2'
+
+train:
+  batchsize: 10
+  epochs: 10
+  epochs_per_stage: 10 # Total epochs (5 * 20)
+  lr: 0.0001           # Initial/Max learning rate for OneCycleLR
+  lr_decay_factor: 1.0  # Not relevant for single stage
+  weight_decay: 0.00001
+  eta_min: 50         # Min LR for OneCycleLR over 100 epochs
+
+ckpt:
+  PATH: "save_files"
+  save_dir: 'MgNO_Direct_N4_EqLR_Exp1'
+  alias: 'MgNO_Direct_N4_EqLR_Exp1'

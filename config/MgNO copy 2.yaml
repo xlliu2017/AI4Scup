@@ -4,14 +4,14 @@ Project:
   checkpoint: False
   save_top_k: 5
   erase: False
-  do: 'test'
+  do: 'train'
   fine_tune: True
   devices: 1
   accelerator: 'gpu'
   save: True
   save_path: '/ibex/user/liux0t/AI4S-cupv2' 
   save_name: 'submission14new.pt'
-  test_ckpt_path: '/ibex/user/liux0t/AI4S-cupv2/submission14new.pt'
+
 
 data:
   PATH_data: "/ibex/user/liux0t"  # 数据集路径，这里只提供示例
@@ -26,7 +26,7 @@ data:
    
 model:
   name: "MgNO14"
-  iteration: 2
+  iteration: 3
   features: 24
   loss: 'rel_l2' # rel_l2
 
@@ -35,12 +35,26 @@ model:
 train:
   batchsize: 10
   epochs: 5
-  lr: 0.000008
+  lr: 0.000006
   step_size: 100
   gamma: 0.5
   weight_decay: 0.0 #0001
   eta_min: 0.0005
   add_term: True
+
+model:
+  type: MgNO
+  features: 24
+  dim_input: 4
+  layers: 4
+  loss: rel_l2
+  output_size: 2
+  activation: relu
+  padding: 9
+  mg_iterations: [1, 1, 1, 1, 1, 1]
+  mg_layers: 1
+  mean_sos: 1488.3911
+  std_sos: 27.5279
 
 
 
