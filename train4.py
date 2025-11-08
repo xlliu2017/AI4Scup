@@ -1,9 +1,7 @@
 # this is a new model for channel expansion for coarse level and change the iteration for efficient computation but performance seems to be worse than the previous model
-
+# use iterative loss for training
 from pytorch_lightning.callbacks import ModelCheckpoint,LearningRateMonitor
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import CSVLogger
-
 import yaml
 import argparse 
 from bisect import bisect
@@ -21,11 +19,11 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from dataset2 import datasetFactory
-# os.environ['NCCL_P2P_DISABLE']='1'
+os.environ['NCCL_P2P_DISABLE']='1'
 wandb.init(mode = 'disabled')
 #wandb.init(project="lbs")
 # from model import FNO
-# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 
@@ -476,15 +474,13 @@ class MgNO(pl.LightningModule):
                     weight_decay= 1e-5,
                     eta_min = 5e-4,
                     normalize_param = None,
-                    iteration = 1,
-                    epochs = 10
+                    iteration = 1
                     ):
         super(MgNO, self).__init__()
         self.learning_rate = learning_rate
         self.step_size = step_size
         self.gamma = gamma
         self.weight_decay = weight_decay
-        self.epochs = epochs
         self.eta_min = eta_min
         self.iteration = iteration
 
@@ -525,7 +521,7 @@ class MgNO(pl.LightningModule):
         
         self.val_iter = 0
 
-    def forward(self, sos, theta):
+    def forward(self, sos, theta, iteration=5):
         # theta is 100,480,480,2
         # normalize
         sos = (sos - self.mean_sos) / (self.std_sos * .6)
@@ -536,12 +532,15 @@ class MgNO(pl.LightningModule):
  
         u,f,a,diva_list = self.mgno[0](u,f,a,diva_list=[None for _ in range(6)])# batch,feature,x,y:   100,feature_,960+pad,960+pad
         u,f,a,diva_list = self.mgno[1](u,f,a,diva_list=[None for _ in range(6)])
-        for _ in range(self.iteration):
-            u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)  
+        for _ in range(iteration):
+            u_1,f,a,diva_list = self.mgno[1](u,f,a,diva_list)  
 
-        u =self.proj(u)
-        u = theta + u
-        return u
+        u_2,f,a,diva_list = self.mgno[1](u_1,f,a,diva_list)
+        u_1 = self.proj(u_1)
+        u_2 = self.proj(u_2)
+        u_1 = theta + u_1
+        u_2 = theta + u_2
+        return u_1, u_2
 
     def training_step(self, batch: torch.Tensor, batch_idx):    
         sos,theta,y = batch
@@ -550,21 +549,24 @@ class MgNO(pl.LightningModule):
         
         #y = (y - self.mean_field.to(sos.device)) / self.std_field.to(sos.device)
         #out = (self(sos,theta) - self.mean_field.to(sos.device))/ self.std_field.to(sos.device)
-        out = self(sos,theta)
-        loss = self.criterion(out.view(batch_size,-1),y.view(batch_size,-1))#torch.mean(torch.abs(out.view(batch_size,-1)-10*y.view(batch_size,-1)) ** 2)
+        out1, out2 = self(sos,theta, iteration=2)
+
+        loss1 = self.criterion(out1.view(batch_size,-1),y.view(batch_size,-1))#torch.mean(torch.abs(out.view(batch_size,-1)-10*y.view(batch_size,-1)) ** 2)
+        loss2 = self.criterion(out2.view(batch_size,-1),y.view(batch_size,-1))
         #loss = torch.mean(torch.abs(out.view(batch_size,-1)- y.view(batch_size,-1)) ** 2)
         lr = self.trainer.optimizers[0].param_groups[0]['lr']
         self.log('learning_rate', lr, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        self.log("loss", loss, on_epoch=True, prog_bar=True, logger=True)
-        wandb.log({"loss": loss.item()})
-        return loss
+        self.log("loss1", loss1, on_epoch=True, prog_bar=True, logger=True)
+        self.log("loss2", loss2, on_epoch=True, prog_bar=True, logger=True)
+        wandb.log({"loss1": loss1.item()})
+        return loss1 + 2*loss2
 
     def validation_step(self, val_batch: torch.Tensor, batch_idx):
         self.val_iter += 1
         sos,theta,y= val_batch
         batch_size = sos.shape[0]
         #out = self(sos,src)+10*self.homo_field.unsqueeze(0) #new
-        out = self(sos,theta)
+        _, out = self(sos,theta, iteration=2)
         val_loss = self.criterion_val(out.view(batch_size,-1),y.view(batch_size,-1))
         self.log('val_loss', val_loss, on_epoch=True, prog_bar=True, logger=True)
         wandb.log({"val_loss": val_loss.item()})
@@ -594,12 +596,12 @@ class MgNO(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.learning_rate,
-            steps_per_epoch=22080,
-            epochs=self.epochs,
+            steps_per_epoch=11360,
+            epochs=15,
             pct_start=0.01,
             anneal_strategy='cos',
-            div_factor=0.2,
-            final_div_factor=50
+            div_factor=5.0,
+            final_div_factor=20.0
         )
         
         # Return the optimizer and scheduler configuration
@@ -634,29 +636,25 @@ def main(config_file):
                                 monitor = 'val_loss',
                                 mode = 'min',
                                 save_top_k = c_proj['save_top_k'],
-                                filename="model-{epoch:03d}-{val_loss:.4f}-{loss_epoch:.4f}",
+                                filename="model-{epoch:03d}-{val_loss:.4f}",
                             )
-    # if os.path.exists(save_file):
-    #     print(f"The model directory exists. Overwrite? {c_proj['erase']}")
-    #     if c_proj['erase'] == True:
-    #         shutil.rmtree(save_file)
+    if os.path.exists(save_file):
+        print(f"The model directory exists. Overwrite? {c_proj['erase']}")
+        if c_proj['erase'] == True:
+            shutil.rmtree(save_file)
     if c_proj['do'] == 'train':
         train_dataloader, val_dataloader = datasetFactory(config=config, do=c_proj['do'])
     elif c_proj['do'] == 'test':
         val_dataloader = datasetFactory(config=config, do=c_proj['do'])
 
     if c_proj['do'] == 'test':
-        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission13new.pt')
-        # model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNOv3.1/model-epoch=002-val_loss=0.0075.ckpt')['state_dict'])
-        model.criterion_val = LpLoss()
-        model.iteration = c_model['iteration']
+        model = torch.load('/ibex/user/liux0t/AI4S-cupv2/submission13iter.pt')
+        model.iteration = 2
     elif c_proj['fine_tune'] == True:
-        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission13.3.pt')
-        model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNO14/last-v2.ckpt')['state_dict'])
+        model = torch.load('/ibex/user/liux0t/AI4S-cupv2/submission13iter.pt')
         model.learning_rate = c_train['lr']
         model.weight_decay = c_train['weight_decay']
         model.iteration = c_model['iteration']
-        model.epochs = c_train['epochs']
         if c_model['loss'] == 'rel_l2':
             model.criterion = LpLoss()
         elif c_model['loss'] == 'l2':
@@ -672,24 +670,22 @@ def main(config_file):
                     step_size= c_train['step_size'],
                     gamma= c_train['gamma'],
                     weight_decay= c_train['weight_decay'],
-                    epochs=c_train['epochs'],
                     eta_min= c_train['eta_min'],
                     iteration = c_model['iteration']
                     )
-    # model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission_11.pt')['state_dict']) #'/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt'
+    # model.load_state_dict(torch.load('/ibex/user/liux0t/AI4S-cupv2/save_files/MgNOv5.1/model-epoch=001-val_loss=0.0051.ckpt')['state_dict']) #'/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt'
 
     
     # print(model)
     
     max_epochs = config["train"]["epochs"]
     lr_monitor = LearningRateMonitor(logging_interval='step')
-    csv_logger = CSVLogger("logs")
+
     if c_proj['devices'] == 1 :
         trainer = pl.Trainer(max_epochs=max_epochs,
                             accelerator=c_proj['accelerator'], 
                             devices = c_proj['devices'],
                             callbacks = [checkpoint_callback,lr_monitor],
-                            logger=csv_logger,
                             )#,
                             #strategy = 'deepspeed',gradient_clip_val=0.8)  # dp ddp deepspeed
     else: 
@@ -701,9 +697,9 @@ def main(config_file):
                             strategy='ddp_find_unused_parameters_true',) #gradient_clip_val=0.8
 
     if c_proj['do'] == 'train':
-        trainer.fit(model, train_dataloader, val_dataloader,)# ckpt_path='/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNO5/last.ckpt') #ckpt_path='/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt' '/ibex/user/liux0t/AI4S-cupv2/save_files/MgNOv3/model-epoch=001-val_loss=0.0078.ckpt'
+        trainer.fit(model, train_dataloader, val_dataloader, ) #ckpt_path='/ibex/user/liux0t/AI4S-cupv2/save_files/FNO/model-epoch=010-val_loss=0.0311.ckpt' '/ibex/user/liux0t/AI4S-cupv2/save_files/MgNOv3/model-epoch=001-val_loss=0.0078.ckpt'
         if c_proj['save'] == True:
-            save_path = os.path.join(c_proj['save_path'], c_proj['save_name'])
+            save_path = os.path.join(c_proj['save_path'], 'submission13iter.pt')
             torch.save(model, save_path)
             print('save model done')
     elif c_proj['do'] == 'test':
@@ -719,7 +715,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training of the Architectures', add_help=True)
     parser.add_argument('-c','--config_file', type=str, 
                                 help='Path to the configuration file',
-                                default='/ibex/user/liux0t/AI4S-cupv2/config/MgNO.yaml')
+                                default='/ibex/user/liux0t/AI4S-cupv2/config/MgNOiter.yaml')
     args=parser.parse_args()
     config_file = args.config_file
     main(config_file)
