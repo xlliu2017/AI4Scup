@@ -646,13 +646,13 @@ def main(config_file):
         val_dataloader = datasetFactory(config=config, do=c_proj['do'])
 
     if c_proj['do'] == 'test':
-        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission13new.pt')
-        # model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNOv3.1/model-epoch=002-val_loss=0.0075.ckpt')['state_dict'])
+        model = torch.load('/data/wjt/AI4Scup/submission14new.pt', weights_only=False)
+        # model.load_state_dict(torch.load('/data/wjt/AI4Scup/save_files/MgNO_14/last.ckpt', weights_only=False)['state_dict'])
         model.criterion_val = LpLoss()
         model.iteration = c_model['iteration']
     elif c_proj['fine_tune'] == True:
-        model = torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/submission13.3.pt')
-        model.load_state_dict(torch.load('/ibex/ai/home/liux0t/AI4S-cupv2/save_files/MgNO14/last-v2.ckpt')['state_dict'])
+        model = torch.load('/data/wjt/AI4Scup/submission13.3.pt', weights_only=True)
+        model.load_state_dict(torch.load('/data/wjt/AI4Scup/save_files/MgNO14/last-v2.ckpt')['state_dict'])
         model.learning_rate = c_train['lr']
         model.weight_decay = c_train['weight_decay']
         model.iteration = c_model['iteration']
@@ -719,7 +719,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training of the Architectures', add_help=True)
     parser.add_argument('-c','--config_file', type=str, 
                                 help='Path to the configuration file',
-                                default='/ibex/user/liux0t/AI4S-cupv2/config/MgNO.yaml')
+                                default='/data/wjt/AI4Scup/config/MgNO.yaml')
     args=parser.parse_args()
     config_file = args.config_file
     main(config_file)

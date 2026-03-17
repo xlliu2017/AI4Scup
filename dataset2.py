@@ -40,7 +40,7 @@ class File_Loader(Dataset):
         self.data_paths = data_paths
         self.target_paths = target_paths
         self.size = size
-        self.src = np.load('/ibex/user/liux0t/AI4S-cupv2/u_homo_new.npy')
+        self.src = np.load('/data/wjt/AI4Scup/u_homo_new.npy')
 
         self.start_indices = [0] * len(data_paths) #4600
         self.data_count = 0 

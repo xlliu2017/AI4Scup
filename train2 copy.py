@@ -11,6 +11,7 @@ import os
 import torch
 import shutil
 import warnings
+from pathlib import Path
 import wandb
 import numpy as np
 import math
@@ -525,7 +526,7 @@ class MgNO(pl.LightningModule):
         
         self.val_iter = 0
 
-    def forward(self, sos, theta):
+    def _forward_impl(self, sos, theta, return_intermediates=False):
         # theta is 100,480,480,2
         # normalize
         sos = (sos - self.mean_sos) / (self.std_sos * .6)
@@ -533,15 +534,31 @@ class MgNO(pl.LightningModule):
         u = self.lifting_1(theta)
         f = self.lifting_2(theta) 
         a = self.lifting_3(sos)
+
+        intermediate_features = [] if return_intermediates else None
  
         u,f,a,diva_list = self.mgno[0](u,f,a,diva_list=[None for _ in range(6)])# batch,feature,x,y:   100,feature_,960+pad,960+pad
+        if return_intermediates:
+            intermediate_features.append(u[:, 0].detach().to('cpu'))
         u,f,a,diva_list = self.mgno[1](u,f,a,diva_list=[None for _ in range(6)])
+        if return_intermediates:
+            intermediate_features.append(u[:, 0].detach().to('cpu'))
         for _ in range(self.iteration):
             u,f,a,diva_list = self.mgno[1](u,f,a,diva_list)  
+            if return_intermediates:
+                intermediate_features.append(u[:, 0].detach().to('cpu'))
 
         u =self.proj(u)
         u = theta + u
+        if return_intermediates:
+            return u, intermediate_features
         return u
+
+    def forward(self, sos, theta):
+        return self._forward_impl(sos, theta, return_intermediates=False)
+
+    def forward_with_intermediates(self, sos, theta):
+        return self._forward_impl(sos, theta, return_intermediates=True)
 
     def training_step(self, batch: torch.Tensor, batch_idx):    
         sos,theta,y = batch
@@ -614,6 +631,143 @@ class MgNO(pl.LightningModule):
         }    
 ##########################################################################################
 
+def plot_iteration_features(intermediate_maps, sample_idx, output_dir, case_idx):
+    """Plot intermediate feature maps (channel 0) for a specific sample across iterations."""
+    if not intermediate_maps:
+        return
+
+    iteration_dir = Path(output_dir) / f"case_{case_idx:02d}_iterations"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+
+    for iter_idx, feature_map in enumerate(intermediate_maps):
+        if sample_idx >= feature_map.shape[0]:
+            continue
+
+        if isinstance(feature_map, torch.Tensor):
+            feat_tensor = feature_map[sample_idx]
+            feat_np = feat_tensor.detach().cpu().numpy()
+        else:
+            feat_np = np.asarray(feature_map[sample_idx])
+
+        if feat_np.ndim == 3:
+            feat_np = feat_np[0]
+
+        fig, ax = plt.subplots(figsize=(3.2, 3.2))
+        im = ax.imshow(feat_np, cmap='viridis')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.text(0.02, 0.97,
+                f"Iter {iter_idx:02d} | min:{feat_np.min():.2f} max:{feat_np.max():.2f}",
+                transform=ax.transAxes,
+                fontsize=8,
+                fontweight='bold',
+                color='white',
+                va='top')
+        fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+        plt.tight_layout()
+        save_path = iteration_dir / f"case_{case_idx:02d}_iter_{iter_idx:02d}.png"
+        plt.savefig(save_path, dpi=200)
+        plt.close(fig)
+
+
+def save_test_case_plots(model, dataloader, device, output_dir, max_cases=4, plot_iterations=False):
+    """Save truth, prediction, residual, and optional intermediate plots for up to max_cases samples."""
+    if max_cases <= 0:
+        return
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    model.eval()
+    
+    # Determine indices to plot for diversity (evenly spaced)
+    try:
+        total_samples = len(dataloader.dataset)
+        indices_to_plot = np.linspace(0, total_samples - 1, max_cases, dtype=int)
+        indices_to_plot_set = set(indices_to_plot)
+        print(f"Plotting samples at indices: {indices_to_plot}")
+    except Exception as e:
+        print(f"Could not determine dataset length for diverse sampling ({e}), plotting first {max_cases} cases.")
+        indices_to_plot_set = set(range(max_cases))
+
+    current_idx = 0
+    cases_done = 0
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(dataloader):
+            sos, theta, target = batch
+            batch_size = sos.size(0)
+            
+            # Identify which samples in this batch need plotting
+            batch_start = current_idx
+            
+            samples_to_plot = []
+            for local_idx in range(batch_size):
+                global_idx = batch_start + local_idx
+                if global_idx in indices_to_plot_set:
+                    samples_to_plot.append((local_idx, global_idx))
+            
+            if samples_to_plot:
+                sos = sos.to(device)
+                theta = theta.to(device)
+                target = target.to(device)
+
+                if plot_iterations:
+                    prediction, intermediate_feats = model.forward_with_intermediates(sos, theta)
+                else:
+                    prediction = model(sos, theta)
+                    intermediate_feats = None
+                
+                residual = prediction - target
+
+                for local_idx, global_idx in samples_to_plot:
+                    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+                    
+                    sos_np = sos[local_idx, 0].detach().cpu().numpy()
+                    truth_np = target[local_idx, 0].detach().cpu().numpy()
+                    pred_np = prediction[local_idx, 0].detach().cpu().numpy()
+                    resid_np = (residual[local_idx, 0]).detach().cpu().numpy()
+
+                    # Sound Speed
+                    im0 = axes[0].imshow(sos_np, cmap='inferno')
+                    axes[0].set_title("Sound Speed")
+                    axes[0].axis('off')
+                    fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+                    # Truth
+                    im1 = axes[1].imshow(truth_np, cmap='seismic')
+                    axes[1].set_title("Truth")
+                    axes[1].axis('off')
+                    fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+                    # Prediction
+                    im2 = axes[2].imshow(pred_np, cmap='seismic')
+                    axes[2].set_title("Prediction")
+                    axes[2].axis('off')
+                    fig.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+                    # Residual
+                    im3 = axes[3].imshow(resid_np, cmap='bwr')
+                    axes[3].set_title("Residual")
+                    axes[3].axis('off')
+                    fig.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+
+                    plt.tight_layout()
+                    save_path = output_path / f"test_case_{global_idx:05d}.png"
+                    plt.savefig(save_path, dpi=200)
+                    plt.close(fig)
+
+                    if plot_iterations and intermediate_feats:
+                        plot_iteration_features(intermediate_feats, local_idx, output_path, global_idx)
+
+                    cases_done += 1
+            
+            current_idx += batch_size
+            if cases_done >= len(indices_to_plot_set):
+                break
+
+    model.train()
+
 def main(config_file):
     torch.set_float32_matmul_precision("medium")
     with open(config_file, 'r') as stream:
@@ -621,6 +775,7 @@ def main(config_file):
     c_model = config['model']
     c_train = config['train']
     c_proj = config['Project']
+    plot_intermediate_iterations = bool(c_proj.get('plot_intermediate_iterations', False)) and c_proj.get('do') == 'test'
 
     # --- Train-and-Unroll specific config ---
     max_iterations = c_model.get('max_iterations', 5) # Maximum depth (n in algorithm) - Tuned default
@@ -658,14 +813,34 @@ def main(config_file):
         test_ckpt_path = c_proj.get('test_ckpt_path', None)
         if test_ckpt_path and os.path.exists(test_ckpt_path):
              # Need to load the state dict into the initialized model structure
-             checkpoint = torch.load(test_ckpt_path)
+             try:
+                 checkpoint = torch.load(test_ckpt_path, weights_only=False)
+             except TypeError:
+                 checkpoint = torch.load(test_ckpt_path)
              # Adjust iteration depth based on the checkpoint if needed, or set explicitly
-             model.iteration = checkpoint.get('hyper_parameters', {}).get('iteration', max_iterations) # Example: Get from hparams
+             model.iteration = 6 # checkpoint.get('hyper_parameters', {}).get('iteration', max_iterations) # Example: Get from hparams
              model.load_state_dict(checkpoint['state_dict'])
              print(f"Loaded model for testing from: {test_ckpt_path} with iteration depth {model.iteration}")
         else:
              print("Test mode selected but no valid test_ckpt_path provided.")
              return # Exit if no model to test
+
+        device = torch.device('cuda' if c_proj.get('accelerator', 'gpu').lower() in ['gpu', 'cuda'] and torch.cuda.is_available() else 'cpu')
+        model = model.to(device)
+
+        ckpt_dir = Path(test_ckpt_path)
+        if ckpt_dir.is_file():
+            ckpt_dir = ckpt_dir.parent
+        if not ckpt_dir.exists():
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        test_plot_cases = c_proj.get('test_plot_cases', 4)
+        plot_iteration_feats = plot_intermediate_iterations
+        if test_plot_cases > 0:
+            print(f"Generating up to {test_plot_cases} qualitative plots in {ckpt_dir} (iterations plotted: {plot_iteration_feats})...")
+            save_test_case_plots(model, val_dataloader, device, ckpt_dir,
+                                 max_cases=test_plot_cases,
+                                 plot_iterations=plot_iteration_feats)
 
         # Setup trainer for validation only
         trainer = pl.Trainer(accelerator=c_proj['accelerator'],
@@ -752,7 +927,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Training of the Architectures', add_help=True)
     parser.add_argument('-c','--config_file', type=str, 
                                 help='Path to the configuration file',
-                                default='/ibex/user/liux0t/AI4S-cupv2/config/MgNO.yaml')
+                                default='/data/wjt/AI4Scup/config/MgNO.yaml')
     args=parser.parse_args()
     config_file = args.config_file
     main(config_file)
